@@ -8,6 +8,7 @@ require "language_server/completion_provider/ad_hoc"
 require "language_server/definition_provider/ad_hoc"
 require "language_server/file_store"
 require "language_server/project"
+require "solargraph"
 
 require "json"
 
@@ -77,12 +78,30 @@ module LanguageServer
     end
   end
 
+  on :"textDocument/hover" do |request:, api_map:, yard_map:|
+    position = request[:params][:position]
+    position_array = position.fetch_values(:line, :character).map(&:to_i)
+
+    yard_map.instance_variable_set(:@required, api_map.required)
+    api_map.instance_variable_set(:@yard_map, yard_map)
+
+    code_map = Solargraph::CodeMap.new(code: IO.read(request[:params][:textDocument][:uri].sub(%r(^file\:\/\/), "")), filename: request[:params][:textDocument][:uri].sub(%r(^file\:\/\/), ""), api_map: api_map, cursor: position_array)
+    offset = code_map.get_offset(*position_array)
+    contents = code_map.resolve_object_at(offset).map(&:docstring).compact
+
+    Protocol::Interface::Hover.new(
+      contents: contents
+    )
+  end
+
   on :initialize do |request:, variables:|
     variables[:file_store] = FileStore.new(load_paths: $LOAD_PATH, remote_root: request[:params][:rootPath], local_root: Dir.getwd)
     variables[:project] =
       if LanguageServer.adhoc_enabled?
         variables[:project] = Project.new(variables[:file_store])
       end
+    variables[:api_map] = Solargraph::ApiMap.new(request[:params][:rootPath])
+    variables[:yard_map] =  Solargraph::YardMap.new(workspace: request[:params][:rootPath])
 
     Protocol::Interface::InitializeResult.new(
       capabilities: Protocol::Interface::ServerCapabilities.new(
@@ -94,6 +113,7 @@ module LanguageServer
           trigger_characters: %w[.],
         ),
         definition_provider: LanguageServer.adhoc_enabled?,
+        hover_provider: true
       ),
     )
   end
