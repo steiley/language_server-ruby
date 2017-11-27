@@ -79,26 +79,6 @@ module LanguageServer
     end
   end
 
-  on :"textDocument/hover" do |request:, api_map:|
-    position = request[:params][:position]
-    position_array = position.fetch_values(:line, :character).map(&:to_i)
-
-    code_map = Solargraph::CodeMap.new(code: IO.read(request[:params][:textDocument][:uri].sub(%r(^file\:\/\/), "")), filename: request[:params][:textDocument][:uri].sub(%r(^file\:\/\/), ""), api_map: api_map, cursor: position_array)
-    offset = code_map.get_offset(*position_array)
-
-    to_markdown = RDoc::Markup::ToMarkdown.new
-    contents = code_map.resolve_object_at(offset).map do |suggestion|
-      return nil if suggestion.label.nil?
-      %[#{suggestion.label}#{suggestion.arguments.empty? ? "" : "(#{suggestion.arguments.join(', ')})"}
-
-        #{to_markdown.convert(suggestion.docstring)}]
-    end.compact
-
-    Protocol::Interface::Hover.new(
-      contents: contents
-    )
-  end
-
   on :initialize do |request:, variables:|
     variables[:file_store] = FileStore.new(load_paths: $LOAD_PATH, remote_root: request[:params][:rootPath], local_root: Dir.getwd)
     variables[:project] =
@@ -117,7 +97,7 @@ module LanguageServer
           trigger_characters: %w[.],
         ),
         definition_provider: LanguageServer.adhoc_enabled?,
-        hover_provider: true
+        hover_provider: true,
       ),
     )
   end
@@ -180,5 +160,26 @@ module LanguageServer
         DefinitionProvider::AdHoc.new(uri: uri, line: line, character: character, project: project),
       ].flat_map(&:call)
     end
+  end
+
+  on :"textDocument/hover" do |request:, api_map:|
+    position = request[:params][:position]
+    position_array = position.fetch_values(:line, :character).map(&:to_i)
+
+    code_map = Solargraph::CodeMap.new(code: IO.read(request[:params][:textDocument][:uri].sub(%r{^file\:\/\/}, "")),
+                                       filename: request[:params][:textDocument][:uri].sub(%r{^file\:\/\/}, ""), api_map: api_map, cursor: position_array)
+    offset = code_map.get_offset(*position_array)
+
+    to_markdown = RDoc::Markup::ToMarkdown.new
+    contents = code_map.resolve_object_at(offset).map { |suggestion|
+      return nil if suggestion.label.nil?
+      %(#{suggestion.label}#{suggestion.arguments.empty? ? "" : "(#{suggestion.arguments.join(", ")})"}
+
+        #{to_markdown.convert(suggestion.docstring)})
+    }.compact
+
+    Protocol::Interface::Hover.new(
+      contents: contents,
+    )
   end
 end
