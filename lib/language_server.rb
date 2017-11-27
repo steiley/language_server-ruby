@@ -9,6 +9,7 @@ require "language_server/definition_provider/ad_hoc"
 require "language_server/file_store"
 require "language_server/project"
 require "solargraph"
+require "rdoc"
 
 require "json"
 
@@ -84,7 +85,14 @@ module LanguageServer
 
     code_map = Solargraph::CodeMap.new(code: IO.read(request[:params][:textDocument][:uri].sub(%r(^file\:\/\/), "")), filename: request[:params][:textDocument][:uri].sub(%r(^file\:\/\/), ""), api_map: api_map, cursor: position_array)
     offset = code_map.get_offset(*position_array)
-    contents = code_map.resolve_object_at(offset).map(&:docstring).compact
+
+    to_markdown = RDoc::Markup::ToMarkdown.new
+    contents = code_map.resolve_object_at(offset).map do |suggestion|
+      return nil if suggestion.label.nil?
+      %[#{suggestion.label}#{suggestion.arguments.empty? ? "" : "(#{suggestion.arguments.join(', ')})"}
+
+        #{to_markdown.convert(suggestion.docstring)}]
+    end.compact
 
     Protocol::Interface::Hover.new(
       contents: contents
